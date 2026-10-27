@@ -224,7 +224,10 @@ const checkinDue = () => (parseD(today()) - parseD(S.checkin.last || S.createdAt
 const app = document.getElementById('app');
 const tabbar = document.getElementById('tabbar');
 
+const themeMeta = document.querySelector('meta[name="theme-color"]');
 function render() {
+  // Status bar matches the top of the current screen, like a native app.
+  themeMeta.content = S.setup && view === 'home' ? '#f0681c' : '#f6f4f1';
   if (!S.setup) { tabbar.hidden = true; app.innerHTML = viewOnboarding(); return; }
   tabbar.hidden = false;
   app.innerHTML = { home: viewHome, history: viewHistory, vault: viewVault, report: viewReport }[view]();
@@ -652,7 +655,7 @@ function saveDraft() {
   if (draftIsLoan()) t.reason = d.reason.trim();
   const i = S.txns.findIndex((x) => x.id === t.id);
   if (i >= 0) S.txns[i] = t; else S.txns.push(t);
-  save(); closeSheet(); render();
+  save(); closeSheet(); render(); haptic();
   const s = safeToSpend();
   if (t.type === 'expense' && t.date === today() && i < 0) toast(s.today >= 0 ? `Saved. ${money(Math.round(s.today))} left to spend today.` : `Saved. You’re ${money(Math.round(-s.today))} over today.`);
   else if (t.type === 'lend') toast(`Marked: ${t.who} owes you ${money(owedBy(t.who))}`);
@@ -704,6 +707,48 @@ function checkinSheet() {
   <div class="alert accent" style="margin-top:12px"><span class="ic">${icon('compass', 18)}</span><div class="grow"><div class="h3">Next week</div><p style="margin-bottom:0">Stay around <b>${money(Math.max(0, Math.round(s.allowance)))}/day</b> to finish the month inside your limit${L.owed ? `, and try to put back <b>${money(Math.round(Math.min(L.owed, Math.max(500, L.owed / 4))))}</b> into the Vault` : ''}${F.total ? `. Remind friends about the <b>${money(F.total)}</b> they owe you` : ''}.</p></div></div>
   <button class="btn" style="margin-top:16px" data-act="checkin-done">Done${S.checkin.streak ? ` · ${S.checkin.streak + 1} week streak` : ''}</button>`;
 }
+
+/* ---------------- native feel ---------------- */
+const haptic = (ms = 12) => { try { navigator.vibrate?.(ms); } catch {} };
+// Block pinch zoom (iOS ignores user-scalable=no) and browser zoom shortcuts; CSS touch-action handles double-tap.
+['gesturestart', 'gesturechange', 'gestureend'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '0'].includes(e.key)) e.preventDefault(); });
+document.addEventListener('contextmenu', (e) => { if (!e.target.closest('input, textarea')) e.preventDefault(); });
+
+// Swipe a bottom sheet down to dismiss it (only when it's scrolled to the top).
+let drag = null;
+sheetRoot.addEventListener('touchstart', (e) => {
+  const sh = e.target.closest('.sheet');
+  if (!sh || e.touches.length > 1 || e.target.closest('input, textarea, .pills, .cat-grid')) return;
+  if (sh.scrollTop > 0 && !e.target.closest('.grab')) return;
+  drag = { sh, y0: e.touches[0].clientY, dy: 0, t0: Date.now() };
+}, { passive: true });
+sheetRoot.addEventListener('touchmove', (e) => {
+  if (!drag) return;
+  drag.dy = Math.max(0, e.touches[0].clientY - drag.y0);
+  if (drag.dy > 6) {
+    e.preventDefault();
+    drag.sh.classList.add('dragging');
+    drag.sh.style.transform = `translate(-50%, ${drag.dy}px)`;
+    const bd = sheetRoot.querySelector('.backdrop'); if (bd) bd.style.opacity = String(Math.max(0.2, 1 - drag.dy / 400));
+  }
+}, { passive: false });
+sheetRoot.addEventListener('touchend', () => {
+  if (!drag) return;
+  const { sh, dy, t0 } = drag; drag = null;
+  sh.classList.remove('dragging');
+  const fling = dy > 40 && dy / (Date.now() - t0) > 0.6;
+  if (dy > 120 || fling) {
+    sh.classList.add('settle'); sh.style.transform = 'translate(-50%, 100%)';
+    setTimeout(closeSheet, 200);
+  } else if (dy > 0) {
+    sh.classList.add('settle'); sh.style.transform = '';
+    const bd = sheetRoot.querySelector('.backdrop'); if (bd) bd.style.opacity = '';
+    setTimeout(() => sh.classList.remove('settle'), 230);
+  }
+});
 
 /* ---------------- toast & tooltip ---------------- */
 const toastEl = document.getElementById('toast');
